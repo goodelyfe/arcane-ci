@@ -1,0 +1,142 @@
+# Keeps the GitHub fork's main in step with upstream and tests the feature
+# branch rebased onto the latest upstream code, on free GitHub-hosted runners.
+#
+# Lives in its own repo so no CI files end up in the Arcane branches or the
+# upstream pull request.
+name: Sync fork and test feature branch
+
+on:
+  schedule:
+    - cron: '17 */6 * * *' # every 6 hours, off the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORK: goodelyfe/arcane
+  UPSTREAM: getarcaneapp/arcane
+  FEATURE_BRANCH: feat/infisical
+
+jobs:
+  sync:
+    name: Sync fork main and check the rebase
+    runs-on: ubuntu-latest
+    # Only this job gets an OIDC token. No secrets are stored in GitHub: the
+    # runner joins the tailnet and logs in to Infisical with its GitHub identity.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Join the tailnet (ephemeral, tag:ci)
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ vars.TS_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Load the fork token from Infisical
+        uses: Infisical/secrets-action@v1.0.12
+        with:
+          method: oidc
+          identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
+          domain: ${{ vars.INFISICAL_URL }}
+          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+          env-slug: prod
+          secret-path: /arcane-ci
+          export-type: env
+
+      - name: Sync the fork's main with upstream
+        env:
+          GH_TOKEN: ${{ env.FORK_TOKEN }}
+        # Fast-forward only; fails instead of overwriting if main has its own commits.
+        run: gh repo sync "$FORK" --branch main --source "$UPSTREAM"
+
+      - name: Check out the feature branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FORK }}
+          ref: ${{ env.FEATURE_BRANCH }}
+          fetch-depth: 0
+
+      - name: Rebase onto upstream main (test copy only)
+        run: |
+          set -uo pipefail
+          git config user.name ci && git config user.email ci@localhost
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch --quiet upstream main
+          echo "Feature branch is $(git rev-list --count HEAD..upstream/main) upstream commits behind."
+          if ! git rebase --quiet upstream/main; then
+            echo "::error::The feature branch no longer rebases cleanly. Conflicting files:"
+            git diff --name-only --diff-filter=U
+            git rebase --abort
+            exit 1
+          fi
+          git checkout --quiet -B ci-rebased
+          git bundle create "$GITHUB_WORKSPACE/rebased.bundle" ci-rebased
+
+      - name: Share the rebased copy with the test jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebased
+          path: rebased.bundle
+          retention-days: 3
+
+  backend:
+    name: Backend build and tests
+    needs: sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rebased
+      - name: Unpack the rebased copy
+        run: git clone --quiet --branch ci-rebased rebased.bundle arcane
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: arcane/backend/go.mod
+          cache-dependency-path: arcane/backend/go.sum
+      - name: Build everything
+        working-directory: arcane/backend
+        run: go build -tags exclude_frontend ./...
+      - name: Secrets tests and the packages they touch
+        working-directory: arcane/backend
+        run: |
+          go test -tags exclude_frontend -race -count=1 \
+            ./pkg/infisical/... ./pkg/bitwarden/... \
+            ./internal/secretsource/... ./internal/project/... \
+            ./internal/di/... ./pkg/scheduler/...
+      - name: Rest of the backend suite (informational)
+        working-directory: arcane/backend
+        continue-on-error: true
+        run: go test -tags exclude_frontend -count=1 ./...
+
+  frontend:
+    name: Frontend type check and lint
+    needs: sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rebased
+      - name: Unpack the rebased copy
+        run: git clone --quiet --branch ci-rebased rebased.bundle arcane
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - name: Install
+        working-directory: arcane
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Type check
+        working-directory: arcane/frontend
+        run: |
+          pnpm run paraglide:compile
+          pnpm run check
+      - name: Lint the secrets UI
+        working-directory: arcane/frontend
+        run: >
+          pnpm exec eslint src/lib/components/secret-sources src/lib/components/sheets/secret-source-sheet.svelte
+          "src/routes/(app)/customize/secret-sources" "src/routes/(app)/projects/new/+page.svelte"
+          src/lib/services/secret-source-service.ts src/lib/types/secret-source.ts
