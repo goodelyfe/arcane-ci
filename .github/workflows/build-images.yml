@@ -1,0 +1,103 @@
+# Builds a Docker image of the feature branch for amd64 and arm64 and pushes
+# it to GHCR after each sync-and-test run that passed. Uses the built-in
+# GITHUB_TOKEN, so nothing extra is stored in GitHub or Infisical.
+#
+#   ghcr.io/goodelyfe/arcane:secret-sources          latest
+#   ghcr.io/goodelyfe/arcane:secret-sources-<sha>    immutable, one per build
+#
+# Plain upstream needs no build here: use ghcr.io/getarcaneapp/arcane.
+name: Build image
+
+on:
+  workflow_run:
+    workflows: [Sync fork and test feature branch]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if an image for the current commit exists
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FORK: goodelyfe/arcane
+  BRANCH: feat/secret-sources
+  IMAGE: ghcr.io/goodelyfe/arcane
+  TAG: secret-sources
+
+concurrency:
+  group: build-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build feat/secret-sources
+    runs-on: ubuntu-latest
+    # Only build what passed its tests; a manual run builds regardless.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Find the branch head
+        id: head
+        run: |
+          sha=$(git ls-remote "https://github.com/$FORK.git" "refs/heads/$BRANCH" | cut -f1)
+          [[ -n "$sha" ]] || { echo "::error::Branch $BRANCH not found in $FORK"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if this commit is already built
+        id: existing
+        if: ${{ !inputs.force }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:$TAG-${{ steps.head.outputs.short }}" > /dev/null 2>&1; then
+            echo "Image for ${{ steps.head.outputs.short }} already exists; skipping."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the branch
+        if: steps.existing.outputs.found != 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ env.FORK }}
+          ref: ${{ steps.head.outputs.sha }}
+
+      - name: Set up Buildx
+        if: steps.existing.outputs.found != 'true'
+        uses: docker/setup-buildx-action@v4.4.1
+
+      # Arcane's Dockerfile builds the frontend and cross-compiles Go on the
+      # runner's own platform, and its final stage only copies files, so
+      # arm64 needs no emulation and adds little build time.
+      - name: Build and push
+        if: steps.existing.outputs.found != 'true'
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            REVISION=${{ steps.head.outputs.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:${{ env.TAG }}-${{ steps.head.outputs.short }}
+          # The source label links the package to this repo, which keeps
+          # GITHUB_TOKEN allowed to push to it.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.head.outputs.sha }}
+            org.opencontainers.image.title=arcane (feat/secret-sources)
+          cache-from: type=gha,scope=${{ env.TAG }}
+          cache-to: type=gha,scope=${{ env.TAG }},mode=max

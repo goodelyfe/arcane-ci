@@ -1,6 +1,6 @@
 # arcane-ci
 
-Free GitHub-hosted CI for the `feat/infisical` branch of `goodelyfe/arcane`.
+Free GitHub-hosted CI for the `feat/secret-sources` branch of `goodelyfe/arcane`.
 It is a separate repo so no workflow files end up in the Arcane branches or
 the upstream pull request.
 
@@ -8,7 +8,7 @@ Every 6 hours (or from the Actions tab), it:
 
 1. Syncs the fork's `main` with upstream (fast-forward only; it never
    overwrites commits of your own).
-2. Rebases a copy of `feat/infisical` onto upstream `main`. Your real branch is
+2. Rebases a copy of `feat/secret-sources` onto upstream `main`. Your real branch is
    never rewritten. A failed rebase fails the run and lists the conflicting files.
 3. Builds the backend and runs the secrets tests, then the full backend suite
    (informational).
@@ -95,8 +95,19 @@ Make one `git push` update both Forgejo and GitHub:
 ```bash
 git remote set-url --add --push origin "$(git remote get-url origin)"
 git remote set-url --add --push origin https://github.com/goodelyfe/arcane.git
-git push origin feat/infisical
+git push origin feat/secret-sources
 ```
+
+## Image
+
+After each passing run, `build-images.yml` builds the branch (as it is on
+GitHub, not the rebased test copy) into one all-in-one image, like the
+official one, for amd64 and arm64:
+
+- `ghcr.io/goodelyfe/arcane:secret-sources` (latest)
+- `ghcr.io/goodelyfe/arcane:secret-sources-<short sha>` (fixed)
+
+Plain upstream needs no build here; use `ghcr.io/getarcaneapp/arcane`.
 
 ## Notes
 

@@ -16,7 +16,7 @@ permissions:
 env:
   FORK: goodelyfe/arcane
   UPSTREAM: getarcaneapp/arcane
-  FEATURE_BRANCH: feat/infisical
+  FEATURE_BRANCH: feat/secret-sources
 
 jobs:
   sync:
