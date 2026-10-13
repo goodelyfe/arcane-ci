@@ -20,23 +20,25 @@ env:
 
 jobs:
   sync:
-    name: Sync fork main and check the rebase
+    name: Sync fork main
     runs-on: ubuntu-latest
     # Only this job gets an OIDC token. No secrets are stored in GitHub: the
     # runner joins the tailnet and logs in to Infisical with its GitHub identity.
+    # It does nothing else, so the fork token and the tailnet connection end
+    # with the sync step.
     permissions:
       contents: read
       id-token: write
     steps:
       - name: Join the tailnet (ephemeral, tag:ci)
-        uses: tailscale/github-action@v4.2.0
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
           audience: ${{ vars.TS_AUDIENCE }}
           tags: tag:ci
 
       - name: Load the fork token from Infisical
-        uses: Infisical/secrets-action@v1.0.18
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: oidc
           identity-id: ${{ vars.INFISICAL_IDENTITY_ID }}
@@ -52,9 +54,16 @@ jobs:
         # Fast-forward only; fails instead of overwriting if main has its own commits.
         run: gh repo sync "$FORK" --branch main --source "$UPSTREAM"
 
+  rebase:
+    name: Check the rebase
+    needs: sync
+    runs-on: ubuntu-latest
+    # No OIDC token, no tailnet, no fork token: only public repos are read.
+    steps:
       - name: Check out the feature branch
         uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           repository: ${{ env.FORK }}
           ref: ${{ env.FEATURE_BRANCH }}
           fetch-depth: 0
@@ -86,7 +95,7 @@ jobs:
 
   backend:
     name: Backend build and tests
-    needs: sync
+    needs: rebase
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.2
@@ -115,7 +124,7 @@ jobs:
 
   frontend:
     name: Frontend type check and lint
-    needs: sync
+    needs: rebase
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8.0.2

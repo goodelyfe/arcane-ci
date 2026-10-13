@@ -50,7 +50,9 @@ Use its `sub_claim_prefix`, followed by `:ref:refs/heads/main`. Example shape:
    subject `<SUB>`, scope **auth_keys** (write) with tag `tag:ci`.
 3. Copy the **Client ID** and **Audience**.
 
-Runner nodes are ephemeral and disappear when the job ends.
+Runner nodes are ephemeral and disappear when the job ends. Only the `sync`
+job joins the tailnet, and it runs nothing but `gh repo sync`; the rebase and
+test jobs never get the fork token or tailnet access.
 
 ### 2. Infisical: a machine identity that trusts this workflow
 
@@ -62,6 +64,8 @@ Runner nodes are ephemeral and disappear when the job ends.
    - Subject: `<SUB>`
    - Audiences: leave the default (`https://github.com/goodelyfe`)
 3. Add the identity to the project with read access to `/arcane-ci` only.
+   Give every other pipeline its own identity and its own path; never share
+   this one.
 4. Your Infisical server needs outbound access to
    `token.actions.githubusercontent.com` to verify tokens.
 
@@ -73,7 +77,7 @@ In **Settings → Secrets and variables → Actions → Variables**:
 | --- | --- |
 | `TS_OAUTH_CLIENT_ID` | Client ID from step 1 |
 | `TS_AUDIENCE` | Audience from step 1 |
-| `INFISICAL_URL` | `https://infisical.heron-monitor.ts.net` |
+| `INFISICAL_URL` | your Infisical URL on the tailnet, e.g. `https://infisical.<tailnet>.ts.net` |
 | `INFISICAL_IDENTITY_ID` | the machine identity's ID |
 | `INFISICAL_PROJECT_SLUG` | the project slug |
 
