@@ -109,7 +109,12 @@ GitHub, not the rebased test copy) into one all-in-one image, like the
 official one, for amd64 and arm64:
 
 - `ghcr.io/goodelyfe/arcane:secret-sources` (latest)
-- `ghcr.io/goodelyfe/arcane:secret-sources-<short sha>` (fixed)
+- `ghcr.io/goodelyfe/arcane:<version>-secret-sources` (latest on that Arcane
+  version, e.g. `2.15.1-secret-sources`)
+- `ghcr.io/goodelyfe/arcane:<version>-secret-sources-<short sha>` (fixed)
+
+`<version>` is the Arcane release the branch is based on, from its
+`.arcane.json`.
 
 Plain upstream needs no build here; use `ghcr.io/getarcaneapp/arcane`.
 
